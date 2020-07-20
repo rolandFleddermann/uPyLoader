@@ -3,7 +3,8 @@ import re
 from threading import Lock, Thread
 
 from src.utility.exceptions import OperationError
-
+from PyQt5.QtWidgets import QProgressDialog
+from PyQt5.QtCore import Qt
 
 class Connection:
     def __init__(self, terminal=None):
@@ -163,6 +164,59 @@ class Connection:
         else:
             raise OperationError()
 
+    def list_file_sizes(self):
+        filenames = self.list_files()
+        success = True
+        # Pause autoreader so we can receive response
+        self._auto_reader_lock.acquire()
+        self._auto_read_enabled = False
+        # Stop any running script
+        self.send_kill()
+        # Read any leftovers
+        self.read_junk()
+        # Mark the start of file listing communication
+        self.send_line("print('#fs#')")
+        # Now we either wait for any running program to finish
+        # or read output that it might be producing until it finally
+        # closes and our command gets executed.
+        ret = ""
+        res =[]
+        while "#fs#" not in ret:
+            try:
+                ret = self.read_to_next_prompt()
+            except TimeoutError:
+                success = False
+        # Now we can be sure that we are ready for running commands
+        # Send command for getting size of each file
+        
+        numFiles = len(filenames)
+        
+        progress = QProgressDialog("Retrieving file sizes...", "a", 0, numFiles)
+        progress.setWindowModality(Qt.WindowModal)
+
+        if success:
+            for (fn,i) in zip(filenames,range(numFiles)):
+                progress.setValue(i)
+                print(fn)
+                if progress.wasCanceled():
+                    break
+                self.send_line("uos.stat('%s')[6]"%fn)
+                # Wait for reply
+                try:
+                    ret = int(self.read_to_next_prompt().split('\r\n')[1])
+                except TimeoutError:
+                    success = False
+                res.append(ret)
+        self._auto_read_enabled = True
+        self._auto_reader_lock.release()
+        progress.setValue(numFiles)
+
+        if success and res:
+            return res
+        else:
+            raise OperationError()
+
+
     def _write_file_job(self, remote_name, content, transfer):
         raise NotImplementedError()
 
@@ -194,5 +248,24 @@ class Connection:
 
     def read_file(self, file_name, transfer):
         job_thread = Thread(target=self._read_file_job, args=(file_name, transfer))
+        job_thread.setDaemon(True)
+        job_thread.start()
+
+
+    def _read_files_job(self, file_names, local_paths, transfer, callback):
+        print("read Files job")
+        # print(file_names)
+        for (file_name, local_path) in zip(file_names,local_paths):
+            print(file_name)
+            self._read_file_job(file_name, transfer)
+            if transfer.cancel_scheduled:
+                transfer.confirm_cancel()
+            if transfer.error or transfer.cancelled:
+                break
+            callback(local_path,transfer)
+
+    def read_files(self, file_names, local_paths, transfer, callback):
+        job_thread = Thread(target=self._read_files_job,
+                            args=(file_names, local_paths, transfer, callback))
         job_thread.setDaemon(True)
         job_thread.start()

@@ -3,7 +3,10 @@ import subprocess
 
 from PyQt5.QtCore import QStringListModel, QModelIndex, Qt, QItemSelectionModel, QEventLoop
 from PyQt5.QtWidgets import QApplication, QMainWindow, QFileSystemModel, \
-    QFileDialog, QInputDialog, QLineEdit, QMessageBox, QHeaderView
+    QFileDialog, QInputDialog, QLineEdit, QMessageBox, QHeaderView, QAbstractItemView
+
+
+from PyQt5.QtGui import QStandardItem, QStandardItemModel
 
 from gui.mainwindow import Ui_MainWindow
 from src.connection.baud_options import BaudOptions
@@ -25,6 +28,10 @@ from src.utility.file_info import FileInfo
 from src.utility.settings import Settings
 
 
+
+
+
+
 class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -42,6 +49,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self._connection = None
         self._root_dir = Settings().root_dir
         self._mcu_files_model = None
+        self._mcu_filesize_model = None
         self._terminal = Terminal()
         self._terminal_dialog = None
         self._code_editor = None
@@ -74,8 +82,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.update_file_tree()
 
         self.listButton.clicked.connect(self.list_mcu_files)
-        self.mcuFilesListView.clicked.connect(self.mcu_file_selection_changed)
-        self.mcuFilesListView.doubleClicked.connect(self.read_mcu_file)
+        self.mcuFilesTreeView.clicked.connect(self.mcu_file_selection_changed)
+        self.mcuFilesTreeView.doubleClicked.connect(self.read_mcu_file)
+        self.mcuFilesTreeView.setRootIsDecorated(False)
+        self.mcuFilesTreeView.setSortingEnabled(True)
         self.executeButton.clicked.connect(self.execute_mcu_code)
         self.removeButton.clicked.connect(self.remove_file)
         self.localPathEdit.setText(self._root_dir)
@@ -90,7 +100,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.transferToMcuButton.clicked.connect(self.transfer_to_mcu)
         self.transferToPcButton.clicked.connect(self.transfer_to_pc)
-
+        
         self.disconnected()
 
     def closeEvent(self, event):
@@ -170,7 +180,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.connectionComboBox.setEnabled(True)
         self.baudComboBox.setEnabled(True)
         self.refreshButton.setEnabled(True)
-        self.mcuFilesListView.setEnabled(False)
+        self.mcuFilesTreeView.setEnabled(False)
         self.executeButton.setEnabled(False)
         self.removeButton.setEnabled(False)
         self.actionTerminal.setEnabled(False)
@@ -192,7 +202,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.connectionComboBox.setEnabled(False)
         self.baudComboBox.setEnabled(False)
         self.refreshButton.setEnabled(False)
-        self.mcuFilesListView.setEnabled(True)
+        self.mcuFilesTreeView.setEnabled(True)
         self.actionTerminal.setEnabled(True)
         if isinstance(self._connection, SerialConnection):
             self.actionUpload.setEnabled(True)
@@ -235,36 +245,77 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         except OperationError:
             QMessageBox().critical(self, "Operation failed", "Could not list files.", QMessageBox.Ok)
             return
-
-        self._mcu_files_model = QStringListModel()
-
-        for file in file_list:
+        try:
+            file_sizes = self._connection.list_file_sizes()
+        except OperationError:
+            QMessageBox().critical(self, "Operation failed", "Could not list files.", QMessageBox.Ok)
+            return
+        lmax = 0
+        for fn in file_list:
+            if len(fn) > lmax:
+                lmax=len(fn)
+        print(lmax)
+        print(file_sizes)
+        numFiles=len(file_sizes)
+        self._mcu_files_model = QStandardItemModel()
+        self._mcu_filesize_model = QStandardItemModel()
+        
+        self._mcu_files_model.setHorizontalHeaderLabels (['name','size'])
+       
+        for (file,fs,i) in zip(file_list,file_sizes,range(numFiles)):
+            QApplication.processEvents()
             idx = self._mcu_files_model.rowCount()
-            self._mcu_files_model.insertRow(idx)
-            self._mcu_files_model.setData(self._mcu_files_model.index(idx), file)
+            item0 = QStandardItem(file)
+            item1 = QStandardItem(str('{:10}'.format(fs)))
+            item1.setTextAlignment(Qt.AlignRight)
+            self._mcu_files_model.setItem(idx,0,item0)
+            self._mcu_files_model.setItem(idx,1,item1)
+            self._mcu_files_model.setData(self._mcu_files_model.createIndex(idx, 1),Qt.AlignRight, Qt.TextAlignmentRole)
+            # self._mcu_files_model.insertRow(idx)
+            # self._mcu_filesize_model.insertRow(idx)
+            # self._mcu_files_model.setData(self._mcu_files_model.index(idx), file)
+            # self._mcu_filesize_model.setData(self._mcu_filesize_model.index(idx),str(fs))
 
-        self.mcuFilesListView.setModel(self._mcu_files_model)
+        self.mcuFilesTreeView.setModel(self._mcu_files_model)
+        self.mcuFilesTreeView.setAllColumnsShowFocus(True)
+        self.mcuFilesTreeView.header().setStretchLastSection(False)        
+        self.mcuFilesTreeView.resizeColumnToContents(0)
+        self.mcuFilesTreeView.resizeColumnToContents(1)
+        # self.mcuFilesTreeView.horizontalHeader.setDefaultAlignment(Qt.AlignRight)
+        self.mcuFilesTreeView.setSelectionMode( QAbstractItemView.MultiSelection )
+        # self.size_view.setModel(self._mcu_filesize_model)
         self.mcu_file_selection_changed()
 
     def execute_mcu_code(self):
-        idx = self.mcuFilesListView.currentIndex()
+        idx = self.mcuFilesTreeView.currentIndex()
         assert isinstance(idx, QModelIndex)
-        model = self.mcuFilesListView.model()
-        assert isinstance(model, QStringListModel)
-        file_name = model.data(idx, Qt.EditRole)
+        model = self.mcuFilesTreeView.model()
+        # assert isinstance(model, QStringListModel)
+        file_name = model.data(idx, 0)
         self._connection.run_file(file_name)
 
     def remove_file(self):
-        idx = self.mcuFilesListView.currentIndex()
-        assert isinstance(idx, QModelIndex)
-        model = self.mcuFilesListView.model()
-        assert isinstance(model, QStringListModel)
-        file_name = model.data(idx, Qt.EditRole)
-        try:
-            self._connection.remove_file(file_name)
-        except OperationError:
-            QMessageBox().critical(self, "Operation failed", "Could not remove the file.", QMessageBox.Ok)
-            return
+        selected_indices = self.mcuFilesTreeView.selectedIndexes()
+        print(selected_indices)
+        progress_dlg = FileTransferDialog(FileTransferDialog.DOWNLOAD)
+        progress_dlg.finished.connect(self.list_mcu_files)
+        progress_dlg.show()
+        file_names = []
+        local_paths = []
+        for idx in selected_indices:
+            # idx = self.mcuFilesTreeView.currentIndex()
+            assert isinstance(idx, QModelIndex)
+            model = self.mcuFilesTreeView.model()
+            # assert isinstance(model, QStringListModel)
+            fn=model.itemFromIndex(model.index(idx.row(),0)).text()
+            print(fn)
+            file_names.append(fn)
+            local_paths.append(self.localPathEdit.text()+"/"+fn)
+            try:
+                self._connection.remove_file(fn)
+            except OperationError:
+                QMessageBox().critical(self, "Operation failed", "Could not remove the file.", QMessageBox.Ok)
+                return
         self.list_mcu_files()
 
     def ask_for_password(self, title, label="Password"):
@@ -385,7 +436,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self._code_editor.set_code(local_path, remote_path, text)
 
     def mcu_file_selection_changed(self):
-        idx = self.mcuFilesListView.currentIndex()
+        idx = self.mcuFilesTreeView.currentIndex()
         assert isinstance(idx, QModelIndex)
         if idx.row() >= 0:
             self.executeButton.setEnabled(True)
@@ -502,10 +553,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def read_mcu_file(self, idx):
         assert isinstance(idx, QModelIndex)
-        model = self.mcuFilesListView.model()
-        assert isinstance(model, QStringListModel)
-        file_name = model.data(idx, Qt.EditRole)
-
+        model = self.mcuFilesTreeView.model()
+        # assert isinstance(model, QStringListModel)
+        # file_name = model.data(idx, 0)
+        file_name=model.itemFromIndex(model.index(idx.row(),0)).text()
         progress_dlg = FileTransferDialog(FileTransferDialog.DOWNLOAD)
         progress_dlg.finished.connect(lambda: self.finished_read_mcu_file(file_name, progress_dlg.transfer))
         progress_dlg.show()
@@ -547,19 +598,60 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 file.write(transfer.read_result.binary_data)
         except IOError:
             QMessageBox.critical(self, "Save operation failed", "Couldn't save the file. Check path and permissions.")
+            
+    def get_remote_file_selection(self):
+        selected_indices = self.mcuFilesTreeView.selectedIndexes()
+        file_names = []
+        local_paths = []
+        for idx in selected_indices:
+            # idx = self.mcuFilesTreeView.currentIndex()
+            assert isinstance(idx, QModelIndex)
+            model = self.mcuFilesTreeView.model()
+            # assert isinstance(model, QStringListModel)
+            if (idx.column()==0):
+                fn=model.itemFromIndex(idx).text()
+                file_names.append(fn)
+        return file_names
+        
 
     def transfer_to_pc(self):
-        idx = self.mcuFilesListView.currentIndex()
-        assert isinstance(idx, QModelIndex)
-        model = self.mcuFilesListView.model()
-        assert isinstance(model, QStringListModel)
-        remote_path = model.data(idx, Qt.EditRole)
-        local_path = self.localPathEdit.text() + "/" + remote_path
+        file_names = self.get_remote_file_selection()
+        local_paths = []
+        for fn in file_names:        
+            local_paths.append(self.localPathEdit.text()+"/"+fn)
+        
+        callback = self.finished_transfer_to_pc
 
         progress_dlg = FileTransferDialog(FileTransferDialog.DOWNLOAD)
-        progress_dlg.finished.connect(lambda: self.finished_transfer_to_pc(local_path, progress_dlg.transfer))
+        # progress_dlg.finished.connect(self.list_mcu_files)
         progress_dlg.show()
-        self._connection.read_file(remote_path, progress_dlg.transfer)
+
+        if len(file_names) == 1:
+            local_path = self.localPathEdit.text() + "/" + file_names[0]
+            progress_dlg.finished.connect(lambda: self.finished_transfer_to_pc(local_path, progress_dlg.transfer))
+            self._connection.read_file(file_names[0], progress_dlg.transfer)
+            return
+
+        # Batch file transfer
+        progress_dlg.enable_cancel()
+        print(len(file_names))
+        progress_dlg.transfer.set_file_count(len(file_names))
+        self._connection.read_files(file_names, local_paths, progress_dlg.transfer, callback)
+
+
+        # for idx in selected_indices:
+        #     idx = self.mcuFilesTreeView.currentIndex()
+        #     assert isinstance(idx, QModelIndex)
+        #     model = self.mcuFilesTreeView.model()
+        #     # assert isinstance(model, QStringListModel)
+        #     remote_path = model.data(idx,0)
+        #     print(remote_path)
+        #     local_path = self.localPathEdit.text() + "/" + remote_path
+    
+        #     progress_dlg = FileTransferDialog(FileTransferDialog.DOWNLOAD)
+        #     progress_dlg.finished.connect(lambda: self.finished_transfer_to_pc(local_path, progress_dlg.transfer))
+        #     progress_dlg.show()
+        #     self._connection.read_file(remote_path, progress_dlg.transfer)
 
     def open_terminal(self):
         if self._terminal_dialog is not None:
