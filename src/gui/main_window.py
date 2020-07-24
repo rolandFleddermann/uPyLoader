@@ -260,17 +260,24 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self._mcu_files_model = QStandardItemModel()
         self._mcu_filesize_model = QStandardItemModel()
         
-        self._mcu_files_model.setHorizontalHeaderLabels (['name','size'])
+        self._mcu_files_model.setHorizontalHeaderLabels (['name','size','type'])
        
         for (file,fs,i) in zip(file_list,file_sizes,range(numFiles)):
             QApplication.processEvents()
             idx = self._mcu_files_model.rowCount()
             item0 = QStandardItem(file)
             item1 = QStandardItem(str('{:10}'.format(fs)))
+            fields= file.split('.')
+            if len(fields)>0:
+                item2 = QStandardItem(fields[-1])
+            else:
+                item2 = QStandardItem(' ')
             item1.setTextAlignment(Qt.AlignRight)
             self._mcu_files_model.setItem(idx,0,item0)
             self._mcu_files_model.setItem(idx,1,item1)
+            self._mcu_files_model.setItem(idx,2,item2)
             self._mcu_files_model.setData(self._mcu_files_model.createIndex(idx, 1),Qt.AlignRight, Qt.TextAlignmentRole)
+            self._mcu_files_model.setData(self._mcu_files_model.createIndex(idx, 1),Qt.AlignLeft, Qt.TextAlignmentRole)
             # self._mcu_files_model.insertRow(idx)
             # self._mcu_filesize_model.insertRow(idx)
             # self._mcu_files_model.setData(self._mcu_files_model.index(idx), file)
@@ -281,6 +288,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.mcuFilesTreeView.header().setStretchLastSection(False)        
         self.mcuFilesTreeView.resizeColumnToContents(0)
         self.mcuFilesTreeView.resizeColumnToContents(1)
+        self.mcuFilesTreeView.resizeColumnToContents(2)
         # self.mcuFilesTreeView.horizontalHeader.setDefaultAlignment(Qt.AlignRight)
         self.mcuFilesTreeView.setSelectionMode( QAbstractItemView.MultiSelection )
         # self.size_view.setModel(self._mcu_filesize_model)
@@ -292,25 +300,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         model = self.mcuFilesTreeView.model()
         # assert isinstance(model, QStringListModel)
         file_name = model.data(idx, 0)
+        print(file_name)
         self._connection.run_file(file_name)
 
     def remove_file(self):
-        selected_indices = self.mcuFilesTreeView.selectedIndexes()
-        print(selected_indices)
-        progress_dlg = FileTransferDialog(FileTransferDialog.DOWNLOAD)
-        progress_dlg.finished.connect(self.list_mcu_files)
-        progress_dlg.show()
-        file_names = []
-        local_paths = []
-        for idx in selected_indices:
-            # idx = self.mcuFilesTreeView.currentIndex()
-            assert isinstance(idx, QModelIndex)
-            model = self.mcuFilesTreeView.model()
-            # assert isinstance(model, QStringListModel)
-            fn=model.itemFromIndex(model.index(idx.row(),0)).text()
-            print(fn)
-            file_names.append(fn)
-            local_paths.append(self.localPathEdit.text()+"/"+fn)
+        file_names = self.get_remote_file_selection()
+        for fn in file_names:
             try:
                 self._connection.remove_file(fn)
             except OperationError:
